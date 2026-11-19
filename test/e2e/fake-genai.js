@@ -21,7 +21,7 @@ export class GoogleGenAI {
       return {
         setWeightedPrompts: async (x) => calls.push(["prompts", x.weightedPrompts]),
         setMusicGenerationConfig: async (x) => calls.push(["config", x.musicGenerationConfig]),
-        play: () => calls.push(["play"]), pause: () => calls.push(["pause"]), resetContext: () => calls.push(["reset"]),
+        play: () => calls.push(["play"]), pause: () => calls.push(["pause"]), resetContext: () => calls.push(["reset"]), close: () => calls.push(["close"]),
       };
     } } };
   }

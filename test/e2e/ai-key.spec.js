@@ -84,3 +84,23 @@ test("storage throws", async ({ page }) => {
   await expect.poll(() => calls(page)).toContain("play");
   expect(errors).toEqual([]);
 });
+
+test("forget closes the open session", async ({ page }) => {
+  await page.goto("/ai.html");
+  await saveKey(page, "test-key-123");
+  await page.click("#play");
+  await expect.poll(() => calls(page)).toContain("play");
+  await page.click("#forgetKey");
+  expect(await calls(page)).toContain("close");
+  await expect(page.locator("#status")).toContainText("Key removed");
+  await expect(page.locator("#play")).toHaveText("Play");
+});
+
+test("google library down", async ({ page }) => {
+  await page.route("**/@google/genai@2.27.0/+esm", (r) => r.abort());
+  await page.goto("/ai.html");
+  await expect(page.locator("#styles button").first()).toBeVisible();
+  await saveKey(page, "test-key-123");
+  await page.click("#play");
+  await expect(page.locator("#status")).toContainText("could not load");
+});

@@ -12,6 +12,8 @@ Your key stays in this browser. This page has no server. It sends your key only 
 - The key is saved in your browser's `localStorage` (`northlight-ai.key`). Tick "Don't save (this tab only)" to keep it only in memory until you close the tab.
 - The page's Content-Security-Policy (top of [`ai.html`](ai.html)) lists the only servers it may contact. The browser blocks every other server.
 - There are no analytics and no tracking.
+- The page never shows or logs your key. One limit: Google's library puts the key in the connection address, and if that connection fails, the browser's developer console can print the address. Do not share console logs from this page.
+- Google's library loads only when you press Play.
 
 ## Run locally
 

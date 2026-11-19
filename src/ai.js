@@ -1,4 +1,13 @@
-import { GoogleGenAI } from "https://cdn.jsdelivr.net/npm/@google/genai@2.27.0/+esm";
+// Google's library loads on the first Play, so the page works (and says why) when the CDN is down.
+const GENAI_URL = "https://cdn.jsdelivr.net/npm/@google/genai@2.27.0/+esm";
+let genai = null;
+async function loadGenai() {
+  genai ||= import(GENAI_URL).catch((e) => {
+    genai = null;
+    throw e;
+  });
+  return genai;
+}
 
 const $ = (s) => document.querySelector(s);
 const rnd = Math.random,
@@ -434,6 +443,14 @@ async function connect() {
   S.connecting = true;
   A.lastConnect = performance.now();
   setStatus("Connecting to Lyria RealTime…");
+  let GoogleGenAI;
+  try {
+    ({ GoogleGenAI } = await loadGenai());
+  } catch {
+    S.connecting = false;
+    setStatus("Northlight AI could not load Google's music library. Check your connection and press Play again.", true);
+    return false;
+  }
   try {
     const ai = new GoogleGenAI({ apiKey, apiVersion: "v1beta" });
     S.session = await ai.live.music.connect({
@@ -821,6 +838,12 @@ $("#saveKey").addEventListener("click", () => {
   setStatus(sessionKey ? "Key kept for this tab only. Press Play." : "Key saved. Press Play.");
 });
 $("#forgetKey").addEventListener("click", () => {
+  // stop the music and close the connection that uses this key
+  if (S.session) {
+    pause();
+    S.session.close();
+    S.session = null;
+  }
   sessionKey = null;
   store.set("key", null);
   $("#key").placeholder = "Paste your key. It stays in this browser.";

@@ -48,12 +48,19 @@ for (const path of PAGES) {
 }
 
 // The real @google/genai module from jsDelivr must load under the CSP: no eval, no other host.
+// It loads on the first Play; the WebSocket to Google is closed by the test, so no key reaches Google.
 test("real genai module loads under the CSP", async ({ page }) => {
+  await page.routeWebSocket(/generativelanguage\.googleapis\.com/, (ws) => ws.close({ code: 1008, reason: "test" }));
+  const genai = page.waitForResponse("**/@google/genai@2.27.0/+esm");
   const violations = await watchViolations(page);
   const errors = collectErrors(page);
   await page.goto("/ai.html");
-  await page.waitForLoadState("networkidle");
-  expect(await page.evaluate(() => document.querySelectorAll("#styles button").length)).toBeGreaterThan(0);
+  await page.fill("#key", "test-key-123");
+  await page.click("#saveKey");
+  await page.click("#play");
+  expect((await genai).ok()).toBe(true);
+  await page.waitForTimeout(3000);
   expect(await violations()).toEqual([]);
-  expect(errors).toEqual([]);
+  expect(errors.filter((e) => !e.startsWith("[northlight-ai]"))).toEqual([]);
+  expect(await page.evaluate(() => document.body.innerText)).not.toContain("test-key-123");
 });
