@@ -416,8 +416,17 @@ async function sendConfig(reset = false) {
   }
 }
 
+// a key kept only in memory ("Don't save"); it wins over a saved key
+let sessionKey = null;
+const getKey = () => sessionKey ?? store.get("key");
+// never show or log the key, even when an error message carries it (for example inside a URL)
+const redact = (text) => {
+  const key = getKey();
+  return key ? String(text).split(key).join("•••") : String(text);
+};
+
 async function connect() {
-  const apiKey = store.get("key");
+  const apiKey = getKey();
   if (!apiKey) {
     setStatus("Add your Gemini API key first.", true);
     return false;
@@ -441,9 +450,9 @@ async function connect() {
         onerror: (e) => showErr(e.error || e),
         onclose: (e) => {
           S.session = null;
-          console.warn("[northlight-ai] closed", e?.code, e?.reason);
+          console.warn("[northlight-ai] closed", e?.code, redact(e?.reason || ""));
           if (S.wantPlay) {
-            setStatus(`Connection closed${e?.reason ? ": " + e.reason : ""}. Reconnecting…`, true);
+            setStatus(`Connection closed${e?.reason ? ": " + redact(e.reason) : ""}. Reconnecting…`, true);
             setTimeout(() => S.wantPlay && start(), 2000);
           }
         },
@@ -618,8 +627,9 @@ function setStatus(t, err = false) {
   el.classList.toggle("err", err);
 }
 function showErr(e) {
-  console.error(e);
-  setStatus("Error: " + (e?.message || String(e)), true);
+  const msg = redact(e?.message || String(e));
+  console.error("[northlight-ai]", msg);
+  setStatus("Error: " + msg, true);
 }
 function renderPlay() {
   $("#play").textContent = S.playing ? "Pause" : S.wantPlay ? "Connecting…" : "Play";
@@ -797,12 +807,19 @@ $("#idea").addEventListener("keydown", (e) => {
 $("#saveKey").addEventListener("click", () => {
   const k = $("#key").value.trim();
   if (!k) return;
-  store.set("key", k);
+  if ($("#keySession").checked) {
+    sessionKey = k;
+    store.set("key", null);
+  } else {
+    sessionKey = null;
+    store.set("key", k);
+  }
   $("#key").value = "";
-  $("#key").placeholder = "Key saved in this browser.";
-  setStatus("Key saved. Press Play.");
+  $("#key").placeholder = sessionKey ? "Key kept for this tab only." : "Key saved in this browser.";
+  setStatus(sessionKey ? "Key kept for this tab only. Press Play." : "Key saved. Press Play.");
 });
 $("#forgetKey").addEventListener("click", () => {
+  sessionKey = null;
   store.set("key", null);
   $("#key").placeholder = "Paste your key. It stays in this browser.";
   setStatus("Key removed from this browser.");

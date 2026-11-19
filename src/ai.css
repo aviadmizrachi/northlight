@@ -274,3 +274,12 @@ footer {
   display: grid;
   gap: 4px;
 }
+.trust {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 62ch;
+}
+.trust a {
+  color: var(--accent);
+}
