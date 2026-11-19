@@ -283,3 +283,9 @@ footer {
 .trust a {
   color: var(--accent);
 }
+#health {
+  margin: -14px 0 0;
+}
+.gap-top {
+  margin-top: 12px;
+}

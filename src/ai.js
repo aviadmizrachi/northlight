@@ -709,7 +709,9 @@ function renderMix() {
       t.appendChild(tag);
       const bar = document.createElement("span");
       bar.className = "bar";
-      bar.innerHTML = `<i style="width:${Math.round(clamp(p.weight / 1.2) * 100)}%"></i>`;
+      const fill = document.createElement("i");
+      fill.style.width = `${Math.round(clamp(p.weight / 1.2) * 100)}%`;
+      bar.append(fill);
       const x = document.createElement("button");
       x.type = "button";
       x.textContent = "×";

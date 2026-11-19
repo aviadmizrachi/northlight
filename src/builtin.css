@@ -294,3 +294,12 @@ kbd {
   font: 13px var(--f-mono);
   margin: 0;
 }
+.legend-accent {
+  --c: var(--accent);
+}
+.legend-warm {
+  --c: var(--warm);
+}
+.legend-muted {
+  --c: var(--muted);
+}

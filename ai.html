@@ -1,4 +1,8 @@
 <meta charset="utf-8" />
+<meta
+  http-equiv="Content-Security-Policy"
+  content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self'; font-src 'self'; img-src 'self' data:; media-src 'self' data: blob:; connect-src 'self' data: blob: https://generativelanguage.googleapis.com wss://generativelanguage.googleapis.com; object-src 'none'; base-uri 'none'; form-action 'none'"
+/>
 <title>Northlight AI</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="stylesheet" href="src/fonts.css" />
@@ -31,7 +35,7 @@
     <button id="play" class="play" type="button">Play</button>
   </section>
   <p id="status" class="status">Add your key, then press Play.</p>
-  <p id="health" class="jinfo" style="margin: -14px 0 0"></p>
+  <p id="health" class="jinfo"></p>
   <canvas id="scope" aria-hidden="true"></canvas>
 
   <section>
@@ -48,7 +52,7 @@
     <h2>Journey</h2>
     <div id="journey" class="journey" aria-live="polite"></div>
     <p id="jinfo" class="jinfo"></p>
-    <div class="row" style="margin-top: 12px">
+    <div class="row gap-top">
       <button id="nextPhase" type="button">Next phase</button>
       <button id="startOver" type="button">Start over</button>
     </div>
@@ -77,7 +81,7 @@
   <section>
     <h2>Steering mix</h2>
     <ul id="mix" class="mix"></ul>
-    <div class="row" style="margin-top: 12px">
+    <div class="row gap-top">
       <input id="idea" type="text" placeholder="Add an idea, for example: acid 303 line, rainy night" />
       <button id="addIdea" type="button">Add</button>
     </div>

@@ -1,4 +1,8 @@
 <meta charset="utf-8" />
+<meta
+  http-equiv="Content-Security-Policy"
+  content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self'; font-src 'self'; img-src 'self' data:; media-src 'self' data: blob:; connect-src 'self' data: blob:; worker-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'"
+/>
 <title>Northlight</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="claude:viewport-fit-sides" content="cover" />
@@ -68,9 +72,9 @@
       <h2>Arrangement · last 96 bars</h2>
       <canvas id="score" role="img" aria-label="Which instrument layers played in each recent bar"></canvas>
       <div class="legend">
-        <span style="--c: var(--accent)">Harmony and melody</span>
-        <span style="--c: var(--warm)">Rhythm</span>
-        <span style="--c: var(--muted)">Energy curve</span>
+        <span class="legend-accent">Harmony and melody</span>
+        <span class="legend-warm">Rhythm</span>
+        <span class="legend-muted">Energy curve</span>
       </div>
     </section>
   </div>
