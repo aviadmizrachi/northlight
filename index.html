@@ -1,0 +1,93 @@
+<meta charset="utf-8" />
+<meta
+  http-equiv="Content-Security-Policy"
+  content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self'; font-src 'self'; img-src 'self' data:; media-src 'self' data: blob:; connect-src 'self' data: blob:; worker-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'"
+/>
+<title>Northlight</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="claude:viewport-fit-sides" content="cover" />
+<link rel="stylesheet" href="src/fonts.css" />
+<link rel="stylesheet" href="src/builtin.css" />
+
+<div class="wrap">
+  <header>
+    <h1>Northlight</h1>
+    <p class="lede">
+      Endless focus music, made live in your browser, so it never plays the same thing twice. Pick a style: minimal Icelandic electronica
+      with piano, strings and a soft beat, or high-tech minimal with a rolling bass, quirky leads and long builds.
+    </p>
+  </header>
+
+  <div class="grid">
+    <section class="deck" aria-label="Player">
+      <div class="transport">
+        <button id="play" class="play" type="button" aria-pressed="false">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path id="playIcon" d="M5 3l12 7-12 7z" /></svg>
+          <span id="playLabel">Play</span>
+        </button>
+        <button id="skip" class="ghost" type="button" disabled title="Move to a new section at the next 4-bar line">Next section</button>
+      </div>
+      <p id="err" class="err" hidden></p>
+
+      <dl class="now" aria-live="off">
+        <dt>Chord</dt>
+        <dd><span id="chord" class="chord">–</span></dd>
+        <dt>Key</dt>
+        <dd id="key">–</dd>
+        <dt>Section</dt>
+        <dd id="section">Waiting to start</dd>
+        <dt>Bar</dt>
+        <dd>
+          <span id="bar">–</span><span class="beat" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        </dd>
+        <dt>Tempo</dt>
+        <dd id="bpm">–</dd>
+        <dt>Running</dt>
+        <dd id="elapsed">0:00</dd>
+      </dl>
+
+      <div class="ctl">
+        <span class="lbl" id="styleLbl">Style</span>
+        <div class="seg" role="radiogroup" aria-labelledby="styleLbl">
+          <button type="button" role="radio" data-style="kiasmos" aria-checked="true">
+            Kiasmos<small>Piano, strings, soft beat</small>
+          </button>
+          <button type="button" role="radio" data-style="brejcha" aria-checked="false">
+            Boris Brejcha<small>High-tech minimal</small>
+          </button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="energy">Energy <output id="energyOut">65</output></label>
+        <input id="energy" type="range" min="0" max="100" step="1" value="65" />
+        <div class="ticks"><span>Ambient</span><span>Steady</span><span>Driving</span></div>
+      </div>
+      <div class="ctl">
+        <label for="volume">Volume <output id="volumeOut">70</output></label>
+        <input id="volume" type="range" min="0" max="100" step="1" value="70" />
+      </div>
+    </section>
+
+    <section class="score" aria-label="Arrangement">
+      <h2>Arrangement · last 96 bars</h2>
+      <canvas id="score" role="img" aria-label="Which instrument layers played in each recent bar"></canvas>
+      <div class="legend">
+        <span class="legend-accent">Harmony and melody</span>
+        <span class="legend-warm">Rhythm</span>
+        <span class="legend-muted">Energy curve</span>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    <span><kbd>Space</kbd> play / pause</span>
+    <span><kbd>N</kbd> next section</span>
+    <span><kbd>↑</kbd> <kbd>↓</kbd> energy</span>
+    <span>Keep the tab open. It plays in the background.</span>
+    <span>Piano: Salamander Grand (Alexander Holm, CC BY 3.0). Strings: tonejs-instruments.</span>
+  </footer>
+</div>
+
+<script src="samples.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+<script src="src/builtin.js"></script>

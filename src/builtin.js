@@ -1,0 +1,1199 @@
+(() => {
+  "use strict";
+  if (typeof Tone === "undefined") {
+    const msg = document.createElement("p");
+    msg.className = "lede";
+    msg.setAttribute("role", "alert");
+    msg.textContent = "Northlight could not load its audio library. Check your connection and reload.";
+    document.querySelector("header").append(msg);
+    document.querySelector("#play").disabled = true;
+    return;
+  }
+  const $ = (s) => document.querySelector(s);
+  const rnd = Math.random;
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  const chance = (p) => rnd() < p;
+  const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const sstep = (t) => {
+    t = clamp(t);
+    return t * t * (3 - 2 * t);
+  };
+  const shuffle = (a) => {
+    a = a.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+  const hz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+
+  // ---------- music theory ----------
+  const MODES = { aeolian: [0, 2, 3, 5, 7, 8, 10], dorian: [0, 2, 3, 5, 7, 9, 10] };
+  const PC = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
+  // Scale degrees, 0 = i. Each chord lasts sec.chordBars bars.
+  const PROGS = [
+    [0, 5, 2, 6],
+    [0, 5, 3, 6],
+    [5, 6, 0, 0],
+    [0, 4, 5, 3],
+    [0, 2, 6, 3],
+    [3, 5, 0, 6],
+    [0, 6, 5, 6],
+    [5, 3, 0, 4],
+  ];
+  const ARCS = {
+    rise: { label: "Rising", f: (t) => lerp(0.15, 0.95, sstep(t)) },
+    peak: { label: "Full", f: (t) => 0.84 + 0.08 * Math.sin(t * Math.PI * 2) },
+    breathe: {
+      label: "Breakdown",
+      f: (t) =>
+        t < 0.4 ? 0.86 : t < 0.43 ? lerp(0.86, 0.12, sstep((t - 0.4) / 0.03)) : t < 0.62 ? lerp(0.12, 0.3, (t - 0.43) / 0.19) : 0.92,
+    },
+    fall: { label: "Settling", f: (t) => lerp(0.9, 0.28, sstep(t)) },
+    drift: { label: "Drift", f: (t) => 0.22 + 0.08 * Math.sin(t * Math.PI * 2) },
+  };
+  // Per-style rules. `use` overrides a layer's chance to appear in a section.
+  const STYLES = {
+    kiasmos: {
+      bpm: [116, 118, 120, 120, 122, 124],
+      thShift: 0,
+      chordBars: [2, 2, 2, 4],
+      highArcs: ["peak", "breathe", "breathe", "fall"],
+      lowArcs: ["rise", "rise", "drift"],
+      use: {},
+    },
+    brejcha: {
+      bpm: [124, 125, 125, 126],
+      thShift: -0.12,
+      chordBars: [4, 4, 8],
+      highArcs: ["peak", "breathe", "breathe"],
+      lowArcs: ["rise"],
+      use: { lead: 0.9, perc: 0.9, piano: 0.35, strings: 0.45, voice: 0.75, bell: 0.2, arp: 0.5, glitch: 0.95, shaker: 0.9 },
+    },
+  };
+  const LAYERS = [
+    { id: "pad", name: "Pad", th: -1, kind: "mel", p: 1 },
+    { id: "piano", name: "Piano", th: 0.04, kind: "mel", p: 0.82 },
+    { id: "strings", name: "Strings", th: 0.3, kind: "mel", p: 0.72 },
+    { id: "voice", name: "Voice", th: -1, kind: "mel", p: 0.55 },
+    { id: "glitch", name: "Glitch", th: 0.24, kind: "rhy", p: 0.7 },
+    { id: "kick", name: "Kick", th: 0.4, kind: "rhy", p: 1 },
+    { id: "hats", name: "Hats", th: 0.47, kind: "rhy", p: 1 },
+    { id: "perc", name: "Perc", th: 0.5, kind: "rhy", p: 0 },
+    { id: "bass", name: "Bass", th: 0.52, kind: "mel", p: 1 },
+    { id: "arp", name: "Arp", th: 0.6, kind: "mel", p: 0.78 },
+    { id: "lead", name: "Lead", th: 0.6, kind: "mel", p: 0 },
+    { id: "clap", name: "Clap", th: 0.68, kind: "rhy", p: 1 },
+    { id: "bell", name: "Bell", th: 0.74, kind: "mel", p: 0.45 },
+    { id: "shaker", name: "Shaker", th: 0.8, kind: "rhy", p: 0.65 },
+  ];
+  const MEL_LEVEL = { pad: 0.9, piano: 0.9, strings: 0.85, voice: 0.8, lead: 0.9, bass: 1, arp: 0.9, bell: 0.9 };
+  const VOWELS = [
+    [800, 1150, 2900],
+    [350, 600, 2700],
+    [450, 800, 2830],
+    [600, 1040, 2250],
+  ];
+
+  const degMidi = (sec, d) => sec.rootMidi + sec.mode[((d % 7) + 7) % 7] + 12 * Math.floor(d / 7);
+  const chordDegs = (deg, ext) => {
+    const ds = [deg, deg + 2, deg + 4];
+    if (ext === "sus2") ds[1] = deg + 1;
+    if (ext === "7") ds.push(deg + 6);
+    if (ext === "add9") ds.push(deg + 8);
+    return ds;
+  };
+  const SHARP = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+  const noteName = (sec, m) => {
+    const major = (sec.pc + (sec.modeName === "dorian" ? 10 : 3)) % 12;
+    return ([7, 2, 9, 4, 11, 6].includes(major) ? SHARP : PC)[((m % 12) + 12) % 12];
+  };
+  function chordName(sec, deg, ext) {
+    const r = degMidi(sec, deg);
+    const iv = (d) => (((degMidi(sec, d) - r) % 12) + 12) % 12;
+    const third = iv(deg + 2),
+      fifth = iv(deg + 4),
+      sev = iv(deg + 6);
+    let q = third === 3 ? (fifth === 6 ? "dim" : "m") : "";
+    if (ext === "sus2") q = "sus2";
+    if (ext === "7") q = q === "m" ? (sev === 10 ? "m7" : "m(maj7)") : q === "dim" ? "m7♭5" : sev === 11 ? "maj7" : "7";
+    if (ext === "add9") q += "add9";
+    return noteName(sec, r) + q;
+  }
+  function voicing(sec, ds, center) {
+    const seen = new Set();
+    const notes = [];
+    for (const d of ds) {
+      let m = degMidi(sec, d) % 12;
+      while (m < center - 6) m += 12;
+      while (m > center + 6) m -= 12;
+      if (!seen.has(m)) {
+        seen.add(m);
+        notes.push(m);
+      }
+    }
+    return notes.sort((a, b) => a - b);
+  }
+  const fitRange = (m, lo, hi) => {
+    while (m < lo) m += 12;
+    while (m > hi) m -= 12;
+    return m;
+  };
+
+  // ---------- generative structure ----------
+  function makeMotif() {
+    const s = new Array(16).fill(null);
+    const n = pick([3, 4, 5, 6]);
+    const pos = [0, ...shuffle([2, 3, 4, 6, 7, 8, 10, 11, 12, 13, 14]).slice(0, n)].sort((a, b) => a - b);
+    let o = pick([0, 2, 4, 7]);
+    pos.forEach((p, i) => {
+      if (i) o = clamp(o + pick([-3, -2, -1, 1, 2, 2, 3]), -2, 9);
+      s[p] = { o, v: (p % 4 === 0 ? 0.6 : 0.46) + rnd() * 0.15 };
+    });
+    return s;
+  }
+  function mutateMotif(m, n = 1) {
+    const s = m.map((x) => (x ? { ...x } : null));
+    for (let k = 0; k < n; k++) {
+      const i = Math.floor(rnd() * 16);
+      if (s[i]) {
+        if (i !== 0 && chance(0.25)) s[i] = null;
+        else s[i].o = clamp(s[i].o + pick([-2, -1, 1, 2]), -2, 9);
+      } else if (chance(0.5)) {
+        s[i] = { o: pick([0, 2, 4, 7]), v: 0.42 + rnd() * 0.2 };
+      }
+    }
+    return s;
+  }
+  const makeMask = (density) => Array.from({ length: 16 }, (_, i) => (i === 0 || chance(density) ? 1 : 0));
+  function makeGlitch() {
+    return Array.from({ length: 16 }, () =>
+      chance(0.2) ? { type: chance(0.6) ? "tick" : "blip", deg: pick([0, 2, 4, 6, 7, 9]), pan: rnd() * 1.6 - 0.8 } : null,
+    );
+  }
+
+  function makeRiff() {
+    const half = Array.from({ length: 16 }, (_, i) =>
+      i === 0 || chance(i % 2 ? 0.3 : 0.5) ? { d: pick([0, 0, 2, 4, 7, 9, -3, 5, 3]), v: i % 4 === 0 ? 0.9 : 0.65 } : null,
+    );
+    if (chance(0.4)) return half;
+    const answer = half.map((x, i) =>
+      i >= 8 && chance(0.6) ? (chance(0.7) ? { d: pick([0, 2, 4, 7, 9, 11, -1]), v: 0.7 } : null) : x && { ...x },
+    );
+    return [...half, ...answer];
+  }
+  const makePerc = () =>
+    Array.from({ length: 16 }, (_, i) => (i % 4 !== 0 && chance(0.22) ? { n: pick([52, 55, 59, 62, 64]), pan: rnd() * 1.2 - 0.6 } : null));
+  const makeChops = () =>
+    Array.from({ length: 16 }, (_, i) =>
+      chance(i % 2 ? 0.12 : 0.22) ? { v: Math.floor(rnd() * VOWELS.length), d: pick([0, 2, 4, 7]) } : null,
+    );
+
+  let sectionCount = 0;
+  function makeSection(prev) {
+    sectionCount++;
+    const st = STYLES[S.style];
+    const prevEnd = prev ? prev.arc.f(1) : 0.15;
+    let arcId;
+    if (!prev) arcId = "rise";
+    else {
+      const pool = prevEnd > 0.6 ? st.highArcs : st.lowArcs;
+      arcId = pick(pool);
+      if (arcId === prev.arcId && arcId !== "rise") arcId = pick(pool);
+    }
+    const len = arcId === "drift" ? pick([48, 64]) : arcId === "breathe" ? pick([96, 112]) : pick([64, 80, 96]);
+
+    let pc,
+      modeName,
+      newKey = false;
+    if (!prev) {
+      pc = pick([2, 4, 5, 7, 9, 11]);
+      modeName = pick(["aeolian", "aeolian", "dorian"]);
+    } else {
+      pc = prev.pc;
+      modeName = prev.modeName;
+      const since = prev.sinceKey + 1;
+      if ((since >= 3 && chance(0.55)) || since >= 4) {
+        pc = (pc + pick([5, 7, 10, 3, 2])) % 12;
+        if (chance(0.3)) modeName = modeName === "aeolian" ? "dorian" : "aeolian";
+        newKey = true;
+      }
+    }
+    const prog = prev && !newKey && chance(0.25) ? prev.prog : pick(PROGS.filter((p) => !prev || p !== prev.prog));
+    const th = {},
+      use = {};
+    for (const L of LAYERS) {
+      th[L.id] = L.th < 0 ? -1 : L.th + st.thShift + (rnd() - 0.5) * 0.08;
+      use[L.id] = chance(st.use[L.id] ?? L.p);
+    }
+    if (!use.piano && !use.strings) use.piano = true;
+
+    return {
+      n: sectionCount,
+      arcId,
+      arc: ARCS[arcId],
+      len,
+      start: prev ? prev.start + prev.len : 0,
+      prevEnd,
+      pc,
+      modeName,
+      mode: MODES[modeName],
+      rootMidi: 45 + ((pc - 9 + 12) % 12),
+      newKey,
+      sinceKey: newKey || !prev ? 0 : prev.sinceKey + 1,
+      style: S.style,
+      bpm: newKey || !prev || prev.style !== S.style ? pick(st.bpm) : prev.bpm,
+      prog,
+      exts: prog.map(() => pick(["", "", "7", "add9", "sus2"])),
+      chordBars: arcId === "drift" ? 4 : pick(st.chordBars),
+      motif: prev && chance(0.35) ? mutateMotif(prev.motif, 3) : makeMotif(),
+      pianoHigh: chance(0.3),
+      arpType: pick(["up", "updown", "seq", "seq"]),
+      arpSeq: Array.from({ length: 8 }, () => Math.floor(rnd() * 5)),
+      arpMask: makeMask(pick([0.55, 0.7, 0.85, 1])),
+      bassPat: S.style === "brejcha" ? pick(["gallop", "gallop", "roll16"]) : pick(["offbeat", "offbeat", "rolling", "sustain", "pulse"]),
+      riff: makeRiff(),
+      perc: makePerc(),
+      chops: makeChops(),
+      glitch: makeGlitch(),
+      th,
+      use,
+    };
+  }
+
+  // ---------- state ----------
+  const S = {
+    built: false,
+    playing: false,
+    step: 0,
+    energy: 0.65,
+    volume: 0.7,
+    style: "kiasmos",
+    riserLen: 64,
+    queue: [],
+    cur: null,
+    on: {},
+    offBars: 99,
+    riserUntil: -1,
+    chord: null,
+    center: 62,
+    mel: 72,
+    arpI: 0,
+    retrigger: false,
+    history: [],
+    startedAt: 0,
+    playedSec: 0,
+  };
+  for (const L of LAYERS) S.on[L.id] = L.id === "pad";
+
+  try {
+    const e = localStorage.getItem("northlight.energy");
+    if (e !== null) S.energy = clamp(+e);
+    const v = localStorage.getItem("northlight.volume");
+    if (v !== null) S.volume = clamp(+v);
+    const st = localStorage.getItem("northlight.style");
+    if (STYLES[st]) S.style = st;
+  } catch {
+    // storage is blocked: keep the defaults
+  }
+  const save = (k, v) => {
+    try {
+      localStorage.setItem("northlight." + k, String(v));
+    } catch {
+      // storage is blocked: keep the defaults
+    }
+  };
+
+  function ensureQueue(bar) {
+    if (!S.queue.length) S.queue.push(makeSection(null));
+    let last = S.queue[S.queue.length - 1];
+    while (last.start + last.len <= bar + 16) {
+      last = makeSection(last);
+      S.queue.push(last);
+    }
+    while (S.queue.length > 3 && S.queue[1].start + S.queue[1].len < bar) S.queue.shift();
+  }
+  const sectionAt = (bar) => S.queue.find((s) => bar >= s.start && bar < s.start + s.len) || S.queue[S.queue.length - 1];
+  function baseAt(bar) {
+    const sec = sectionAt(bar);
+    const b = bar - sec.start;
+    let v = sec.arc.f(b / sec.len);
+    if (b < 8 && sec.n > 1) v = lerp(sec.prevEnd, v, sstep(b / 8));
+    return v;
+  }
+  const energize = (base) => clamp(base * (0.35 + 0.85 * S.energy) + (S.energy - 0.5) * 0.35);
+  const intensityAt = (bar) => energize(baseAt(bar));
+
+  // ---------- audio graph ----------
+  let N = {};
+  async function loadSet(name) {
+    const out = {};
+    await Promise.all(
+      Object.entries(window.NL_SAMPLES[name]).map(async ([note, b64]) => {
+        const bin = atob(b64),
+          u = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+        out[note] = new Tone.ToneAudioBuffer(await Tone.getContext().decodeAudioData(u.buffer));
+      }),
+    );
+    return out;
+  }
+  async function build() {
+    const T = Tone;
+    T.getContext().lookAhead = 0.2;
+    const master = new T.Gain(0);
+    const limiter = new T.Limiter(-1.5);
+    const tone = new T.Filter({ type: "lowpass", frequency: 15000, rolloff: -12 });
+    const comp = new T.Compressor({ threshold: -20, ratio: 2.5, attack: 0.03, release: 0.3 });
+    const mix = new T.Gain(2.4);
+    // tape: light saturation and a slow pitch wobble on the whole mix
+    const tape = new T.Distortion({ distortion: 0.06, wet: 0.3, oversample: "2x" });
+    const wow = new T.Vibrato({ frequency: 0.45, depth: 0.012 });
+    mix.chain(comp, tape, wow, tone, master, limiter, T.Destination);
+    const hasSamples = !!window.NL_SAMPLES;
+    const [pianoBufs, violinBufs, celloBufs] = hasSamples ? await Promise.all(["piano", "violin", "cello"].map(loadSet)) : [];
+
+    const reverb = new T.Reverb({ decay: 7, preDelay: 0.03, wet: 1 });
+    await reverb.ready;
+    const verbIn = new T.Gain(1);
+    const verbEq = new T.Filter({ type: "highpass", frequency: 220 });
+    verbIn.chain(verbEq, reverb, mix);
+    const room = new T.Reverb({ decay: 1.3, preDelay: 0.008, wet: 1 });
+    await room.ready;
+    const roomIn = new T.Gain(1);
+    roomIn.chain(room, mix);
+    const pump = new T.Gain(1).connect(mix);
+
+    const bus = (id, level, { pumped = false, send = 0.2, roomSend = 0.12 } = {}) => {
+      const g = new T.Gain(level);
+      g.connect(pumped ? pump : mix);
+      const s = new T.Gain(send);
+      g.connect(s);
+      s.connect(verbIn);
+      const rs = new T.Gain(roomSend);
+      g.connect(rs);
+      rs.connect(roomIn);
+      return g;
+    };
+
+    // Pad
+    const padBus = bus("pad", MEL_LEVEL.pad, { pumped: true, send: 0.35 });
+    const padFilter = new T.Filter({ type: "lowpass", frequency: 800, Q: 0.6, rolloff: -24 });
+    const chorus = new T.Chorus({ frequency: 0.25, delayTime: 4, depth: 0.6, spread: 180, wet: 0.5 }).start();
+    const pad = new T.PolySynth(T.Synth, {
+      oscillator: { type: "fatsawtooth", count: 3, spread: 22 },
+      envelope: { attack: 2.4, decay: 1, sustain: 0.85, release: 5 },
+    });
+    pad.maxPolyphony = 16;
+    pad.volume.value = -21;
+    pad.chain(padFilter, chorus, padBus);
+
+    // Strings
+    const strBus = bus("strings", 0, { pumped: true, send: 0.45 });
+    const strFilter = new T.Filter({ type: "lowpass", frequency: 2000, Q: 0.4 });
+    const vib = new T.Vibrato({ frequency: 4.8, depth: 0.06 });
+    const strings = new T.PolySynth(T.Synth, {
+      oscillator: { type: "fatsawtooth", count: 2, spread: 14 },
+      envelope: { attack: 1.5, decay: 0.6, sustain: 0.9, release: 3 },
+    });
+    strings.volume.value = -21;
+    strings.chain(vib, strFilter, strBus);
+    let violin = null,
+      cello = null;
+    if (hasSamples) {
+      violin = new T.Sampler({ urls: violinBufs, attack: 0.5, release: 1.8 });
+      violin.volume.value = -14;
+      cello = new T.Sampler({ urls: celloBufs, attack: 0.12, release: 0.9 });
+      cello.volume.value = -13;
+      const sF = new T.Filter({ type: "lowpass", frequency: 5000, Q: 0.3 }).connect(strBus);
+      violin.connect(sF);
+      cello.connect(sF);
+    }
+
+    // Felt piano (FM)
+    const pnoBus = bus("piano", MEL_LEVEL.piano, { send: 0.4, roomSend: 0.35 });
+    const pnoFilter = new T.Filter({ type: "lowpass", frequency: 2800, Q: 0.3 });
+    const pnoDelay = new T.FeedbackDelay({ delayTime: "4n.", feedback: 0.22, wet: 0.16 });
+    const piano = new T.PolySynth(T.FMSynth, {
+      harmonicity: 2,
+      modulationIndex: 1.4,
+      oscillator: { type: "sine" },
+      modulation: { type: "triangle" },
+      envelope: { attack: 0.004, decay: 3.2, sustain: 0, release: 2.4 },
+      modulationEnvelope: { attack: 0.002, decay: 0.45, sustain: 0, release: 0.4 },
+    });
+    piano.maxPolyphony = 12;
+    piano.volume.value = -8;
+    let pianoOut = piano;
+    if (hasSamples) {
+      pianoOut = new T.Sampler({ urls: pianoBufs, release: 1.4 });
+      pianoOut.volume.value = -2;
+      pnoFilter.frequency.value = 2300;
+    }
+    pianoOut.chain(pnoFilter, pnoDelay, pnoBus);
+    const pedal = new T.NoiseSynth({ noise: { type: "brown" }, envelope: { attack: 0.005, decay: 0.22, sustain: 0 } });
+    pedal.volume.value = -34;
+    pedal.chain(new T.Filter({ type: "lowpass", frequency: 380 }), pnoBus);
+
+    // Bass
+    const bassBus = bus("bass", 0, { pumped: true, send: 0.02 });
+    const bass = new T.MonoSynth({
+      oscillator: { type: "triangle" },
+      filter: { Q: 1, type: "lowpass", rolloff: -24 },
+      envelope: { attack: 0.006, decay: 0.25, sustain: 0.55, release: 0.18 },
+      filterEnvelope: { attack: 0.004, decay: 0.2, sustain: 0.3, release: 0.2, baseFrequency: 110, octaves: 2.4 },
+    });
+    bass.volume.value = -14;
+    bass.connect(bassBus);
+
+    // Arp
+    const arpBus = bus("arp", 0, { pumped: true, send: 0.25 });
+    const arpFilter = new T.Filter({ type: "lowpass", frequency: 1200, Q: 2.2 });
+    const arpDelay = new T.PingPongDelay({ delayTime: "8n.", feedback: 0.32, wet: 0.3 });
+    const arp = new T.Synth({ oscillator: { type: "square4" }, envelope: { attack: 0.002, decay: 0.15, sustain: 0, release: 0.12 } });
+    arp.volume.value = -23;
+    arp.chain(arpFilter, arpDelay, arpBus);
+
+    // Voice: a wordless choir made with formant filters; the vowel drifts between ooh and aah
+    const voxBus = bus("voice", 0, { pumped: true, send: 0.65, roomSend: 0.2 });
+    const voxSum = new T.Gain(1).connect(voxBus);
+    const formants = [0, 1, 2].map((i) => {
+      const f = new T.Filter({ type: "bandpass", frequency: VOWELS[0][i], Q: [7, 9, 11][i] });
+      f.connect(new T.Gain([2.4, 1.2, 0.4][i]).connect(voxSum));
+      return f;
+    });
+    const voxVib = new T.Vibrato({ frequency: 5.1, depth: 0.07 });
+    formants.forEach((f) => voxVib.connect(f));
+    const voice = new T.PolySynth(T.Synth, {
+      oscillator: { type: "fatsawtooth", count: 3, spread: 16 },
+      envelope: { attack: 1.8, decay: 0.6, sustain: 0.9, release: 3.2 },
+    });
+    voice.volume.value = -17;
+    voice.connect(voxVib);
+    const chop = new T.Synth({
+      oscillator: { type: "fatsawtooth", count: 2, spread: 12 },
+      envelope: { attack: 0.004, decay: 0.12, sustain: 0.25, release: 0.08 },
+    });
+    chop.volume.value = -10;
+    chop.connect(voxVib);
+    const breath = new T.Noise("pink");
+    breath.volume.value = -30;
+    breath.connect(voxVib);
+
+    // Bell
+    const bellBus = bus("bell", 0, { send: 0.7 });
+    const bellDelay = new T.FeedbackDelay({ delayTime: "4n", feedback: 0.35, wet: 0.3 });
+    const bell = new T.FMSynth({
+      harmonicity: 3.01,
+      modulationIndex: 5,
+      envelope: { attack: 0.002, decay: 2.6, sustain: 0, release: 2 },
+      modulationEnvelope: { attack: 0.002, decay: 0.7, sustain: 0, release: 0.5 },
+    });
+    bell.volume.value = -21;
+    bell.chain(bellDelay, bellBus);
+
+    // High-tech minimal: saw lead riff and rolling bass
+    const leadBus = bus("lead", 0, { pumped: true, send: 0.25 });
+    const lead = new T.MonoSynth({
+      oscillator: { type: "fatsawtooth", count: 2, spread: 18 },
+      envelope: { attack: 0.003, decay: 0.18, sustain: 0.2, release: 0.15 },
+      filter: { Q: 3, type: "lowpass", rolloff: -24 },
+      filterEnvelope: { attack: 0.002, decay: 0.16, sustain: 0.2, release: 0.2, baseFrequency: 380, octaves: 3.4 },
+    });
+    lead.volume.value = -12;
+    lead.chain(new T.PingPongDelay({ delayTime: "8n.", feedback: 0.35, wet: 0.28 }), leadBus);
+    const rbass = new T.MonoSynth({
+      oscillator: { type: "sawtooth" },
+      filter: { Q: 4, type: "lowpass", rolloff: -24 },
+      envelope: { attack: 0.003, decay: 0.12, sustain: 0.3, release: 0.06 },
+      filterEnvelope: { attack: 0.002, decay: 0.09, sustain: 0.1, release: 0.1, baseFrequency: 140, octaves: 2.6 },
+    });
+    rbass.volume.value = -11;
+    rbass.connect(bassBus);
+
+    // Drums
+    const drumBus = bus("drums", 1, { send: 0.05, roomSend: 0.18 });
+    const kick = new T.MembraneSynth({
+      pitchDecay: 0.045,
+      octaves: 6,
+      oscillator: { type: "sine" },
+      envelope: { attack: 0.001, decay: 0.42, sustain: 0, release: 0.1 },
+    });
+    kick.volume.value = -9;
+    kick.connect(drumBus);
+    const hatHP = new T.Filter({ type: "highpass", frequency: 7500 }).connect(drumBus);
+    const hatC = new T.NoiseSynth({ noise: { type: "white" }, envelope: { attack: 0.001, decay: 0.045, sustain: 0 } });
+    hatC.volume.value = -29;
+    hatC.connect(hatHP);
+    const hatO = new T.NoiseSynth({ noise: { type: "white" }, envelope: { attack: 0.002, decay: 0.17, sustain: 0 } });
+    hatO.volume.value = -31;
+    hatO.connect(hatHP);
+    const clapBP = new T.Filter({ type: "bandpass", frequency: 1700, Q: 0.8 });
+    const clapBus = bus("clap", 1, { send: 0.5 });
+    const clap = new T.NoiseSynth({ noise: { type: "pink" }, envelope: { attack: 0.002, decay: 0.14, sustain: 0 } });
+    clap.volume.value = -21;
+    clap.chain(clapBP, clapBus);
+    const shakPan = new T.Panner(0.25);
+    const shakHP = new T.Filter({ type: "highpass", frequency: 5500 });
+    const shaker = new T.NoiseSynth({ noise: { type: "white" }, envelope: { attack: 0.003, decay: 0.035, sustain: 0 } });
+    shaker.volume.value = -33;
+    shaker.chain(shakHP, shakPan, drumBus);
+
+    const percPan = new T.Panner(0).connect(drumBus);
+    const perc = new T.MembraneSynth({ pitchDecay: 0.012, octaves: 2, envelope: { attack: 0.001, decay: 0.13, sustain: 0 } });
+    perc.volume.value = -20;
+    perc.connect(percPan);
+    const snare = new T.NoiseSynth({ noise: { type: "white" }, envelope: { attack: 0.001, decay: 0.11, sustain: 0 } });
+    snare.volume.value = -24;
+    snare.chain(new T.Filter({ type: "bandpass", frequency: 2400, Q: 0.7 }), clapBus);
+    const click = new T.NoiseSynth({ noise: { type: "white" }, envelope: { attack: 0.0005, decay: 0.004, sustain: 0 } });
+    click.volume.value = -24;
+    click.chain(new T.Filter({ type: "highpass", frequency: 3000 }), drumBus);
+
+    // Glitch: tiny ticks and blips that wander across the stereo field
+    const glitchBus = bus("glitch", 0, { send: 0.3 });
+    const gPan = new T.Panner(0).connect(glitchBus);
+    const gHP = new T.Filter({ type: "highpass", frequency: 5000 }).connect(gPan);
+    const tick = new T.NoiseSynth({ noise: { type: "white" }, envelope: { attack: 0.0005, decay: 0.008, sustain: 0 } });
+    tick.volume.value = -19;
+    tick.connect(gHP);
+    const blip = new T.Synth({ oscillator: { type: "square" }, envelope: { attack: 0.001, decay: 0.04, sustain: 0, release: 0.02 } });
+    blip.volume.value = -28;
+    blip.connect(gPan);
+
+    // Texture: tape hiss and vinyl crackle
+    const texBus = bus("texture", 1, { send: 0 });
+    const hiss = new T.Noise("pink");
+    hiss.volume.value = -47;
+    const hissLP = new T.Filter({ type: "lowpass", frequency: 2200 });
+    hiss.chain(hissLP, texBus);
+    const crackle = new T.NoiseSynth({ noise: { type: "white" }, envelope: { attack: 0.0005, decay: 0.002, sustain: 0 } });
+    crackle.volume.value = -36;
+    crackle.connect(new T.Filter({ type: "highpass", frequency: 2500 }).connect(texBus));
+
+    // Riser and impact wash
+    const riserBus = bus("riser", 1, { send: 0.5 });
+    const riserGain = new T.Gain(0).connect(riserBus);
+    const riserBP = new T.Filter({ type: "bandpass", frequency: 400, Q: 1.4 }).connect(riserGain);
+    const riser = new T.Noise("white");
+    riser.volume.value = -14;
+    riser.connect(riserBP);
+    const washBus = bus("wash", 1, { send: 0.9 });
+    const wash = new T.NoiseSynth({ noise: { type: "pink" }, envelope: { attack: 0.02, decay: 3, sustain: 0 } });
+    wash.volume.value = -27;
+    wash.chain(new T.Filter({ type: "lowpass", frequency: 1800 }), washBus);
+
+    N = {
+      master,
+      drumBus,
+      pump,
+      chop,
+      lead,
+      leadBus,
+      rbass,
+      perc,
+      percPan,
+      snare,
+      click,
+      padBus,
+      padFilter,
+      pad,
+      strBus,
+      strings,
+      violin,
+      cello,
+      pnoBus,
+      piano: pianoOut,
+      pedal,
+      voxBus,
+      voice,
+      formants,
+      breath,
+      bassBus,
+      bass,
+      arpBus,
+      arpFilter,
+      arp,
+      bellBus,
+      bell,
+      kick,
+      hatC,
+      hatO,
+      clap,
+      shaker,
+      glitchBus,
+      gPan,
+      tick,
+      blip,
+      hiss,
+      crackle,
+      riser,
+      riserGain,
+      riserBP,
+      wash,
+    };
+
+    T.Transport.bpm.value = 120;
+    T.Transport.swing = 0.06;
+    T.Transport.swingSubdivision = "16n";
+    new T.Loop((time) => {
+      try {
+        tick16(time);
+      } catch (e) {
+        console.error(e);
+      }
+      S.step++;
+    }, "16n").start(0);
+    S.built = true;
+    window.__northlight = { S, N, intensityAt };
+  }
+
+  // ---------- sequencing ----------
+  const barSec = () => Tone.Time("1m").toSeconds();
+
+  function voiceWanted(sec, bar) {
+    const t = (bar - sec.start) / sec.len;
+    return sec.arcId === "drift" || sec.arcId === "peak" || (sec.arcId === "breathe" && t > 0.4 && t < 0.64);
+  }
+  function updateLayers(sec, I, time, bar) {
+    for (const L of LAYERS) {
+      if (L.id === "pad") continue;
+      const was = S.on[L.id];
+      const want =
+        L.id === "voice"
+          ? sec.use.voice && voiceWanted(sec, bar)
+          : sec.use[L.id] && (was ? I > sec.th[L.id] - 0.04 : I > sec.th[L.id] + 0.02);
+      if (want === was) continue;
+      S.on[L.id] = want;
+      const g = {
+        piano: N.pnoBus,
+        strings: N.strBus,
+        voice: N.voxBus,
+        lead: N.leadBus,
+        bass: N.bassBus,
+        arp: N.arpBus,
+        bell: N.bellBus,
+        glitch: N.glitchBus,
+      }[L.id];
+      if (g) g.gain.rampTo(want ? MEL_LEVEL[L.id] || 1 : 0, want ? (L.id === "bass" ? 0.05 : 3) : 4, time);
+    }
+  }
+
+  function playChord(sec, bIn, time, durBars) {
+    const idx = Math.floor(bIn / sec.chordBars) % sec.prog.length;
+    const deg = sec.modeName === "dorian" && sec.prog[idx] === 5 ? 3 : sec.prog[idx],
+      ext = sec.exts[idx];
+    const ds = chordDegs(deg, ext);
+    const notes = voicing(sec, ds, S.center);
+    const mean = notes.reduce((a, b) => a + b, 0) / notes.length;
+    S.center = Math.round(lerp(mean, 62, 0.35));
+    const low = fitRange(degMidi(sec, deg), 40, 51);
+    const dur = durBars * barSec() * 0.98;
+    N.pad.triggerAttackRelease([low, ...notes].map(hz), dur, time, 0.7);
+
+    // string melody: chord tone near the previous one
+    const cands = [];
+    for (const d of ds)
+      for (let o = 0; o < 3; o++) {
+        const m = fitRange(degMidi(sec, d), 66, 78) + (o - 1) * 12;
+        if (m >= 64 && m <= 81) cands.push(m);
+      }
+    cands.sort((a, b) => Math.abs(a - S.mel) - Math.abs(b - S.mel));
+    S.mel = chance(0.7) ? cands[0] : pick(cands.slice(0, 3));
+    const cello = fitRange(degMidi(sec, deg), 38, 49);
+    if (S.on.strings) {
+      if (N.violin) N.violin.triggerAttackRelease(hz(S.mel), dur, time + 0.03, 0.5 + rnd() * 0.15);
+      else N.strings.triggerAttackRelease([hz(S.mel), hz(cello)], dur, time, 0.6);
+    }
+    if (S.on.voice && sec.style !== "brejcha") {
+      const v = VOWELS[Math.floor(rnd() * VOWELS.length)];
+      N.formants.forEach((f, i) => f.frequency.rampTo(v[i], 3, time));
+      N.voice.triggerAttackRelease(notes.slice(-2).map(hz), dur, time, 0.6);
+    }
+    if (S.on.piano) N.pedal.triggerAttackRelease("16n", time + 0.01, 0.5 + rnd() * 0.4);
+    const arpNotes = [...notes.map((m) => m + 12), notes[0] + 24];
+    S.chord = { deg, ext, cello, name: chordName(sec, deg, ext), notes, arpNotes, bass: fitRange(degMidi(sec, deg), 33, 44) };
+  }
+
+  function startRiser(time, bars) {
+    const d = bars * barSec();
+    S.riserUntil = S.step + bars * 16;
+    S.riserLen = bars * 16;
+    N.riserBP.frequency.cancelScheduledValues(time);
+    N.riserBP.frequency.setValueAtTime(350, time);
+    N.riserBP.frequency.exponentialRampToValueAtTime(7500, time + d);
+    N.riserGain.gain.cancelScheduledValues(time);
+    N.riserGain.gain.setValueAtTime(0, time);
+    N.riserGain.gain.linearRampToValueAtTime(0.22, time + d * 0.97);
+    N.riserGain.gain.linearRampToValueAtTime(0, time + d + 0.04);
+  }
+
+  function onBar(bar, time) {
+    ensureQueue(bar);
+    const sec = sectionAt(bar);
+    const bIn = bar - sec.start;
+    const newSection = sec !== S.cur;
+    if (newSection) {
+      S.cur = sec;
+      if (Tone.Transport.bpm.value !== sec.bpm) Tone.Transport.bpm.rampTo(sec.bpm, 24, time);
+      S.arpI = 0;
+      const hi = sec.style === "brejcha";
+      Tone.Transport.swing = hi ? 0.02 : 0.06;
+      N.kick.set({ pitchDecay: hi ? 0.03 : 0.045, envelope: { decay: hi ? 0.3 : 0.42 } });
+      N.kick.volume.rampTo(hi ? -6 : -9, 0.1, time);
+    }
+    const I = intensityAt(bar);
+    const wasKick = S.on.kick;
+    if (bar % 4 === 0 || newSection || S.history.length === 0) updateLayers(sec, I, time, bar);
+    if (S.on.kick && !wasKick && S.offBars >= 4) {
+      N.wash.triggerAttackRelease(3, time, 0.9);
+    }
+    S.offBars = S.on.kick ? 0 : S.offBars + 1;
+
+    // continuous mix moves
+    N.padBus.gain.rampTo(lerp(0.95, 0.6, I), 2, time);
+    if (S.on.piano) N.pnoBus.gain.rampTo(lerp(0.95, 0.6, I), 2, time);
+    N.padFilter.frequency.rampTo(lerp(550, 2400, I), 4, time);
+    N.rbass.filterEnvelope.baseFrequency = lerp(110, 320, 0.5 + 0.5 * Math.sin(bar / 5)) * (0.7 + 0.5 * I);
+    const arpTh = sec.th.arp;
+    N.arpFilter.frequency.rampTo(lerp(700, 4200, clamp((I - arpTh) / (1 - arpTh))), 3, time);
+
+    // chords
+    if (bIn % sec.chordBars === 0) playChord(sec, bIn, time, sec.chordBars);
+    else if (S.retrigger || !S.chord) playChord(sec, bIn, time, sec.chordBars - (bIn % sec.chordBars));
+    S.retrigger = false;
+    if (S.on.strings && N.cello) N.cello.triggerAttackRelease(hz(S.chord.cello), barSec() * 1.05, time + 0.02, 0.45 + rnd() * 0.15);
+
+    // riser before the beat comes back
+    if (bar % 4 === 0 && !S.on.kick && S.step >= S.riserUntil) {
+      const onAt = (b) => intensityAt(b) > sectionAt(b).th.kick + 0.02;
+      if (sec.style === "brejcha" && onAt(bar + 8) && !onAt(bar + 4)) startRiser(time, 8);
+      else if (onAt(bar + 4)) startRiser(time, 4);
+    }
+
+    // glitch pattern drifts a little every 4 bars
+    if (bar % 4 === 0 && chance(0.5)) {
+      const i = Math.floor(rnd() * 16);
+      sec.glitch[i] = sec.glitch[i] ? null : makeGlitch().find(Boolean) || null;
+    }
+
+    S.history.push({ I, on: { ...S.on }, secStart: bIn === 0, n: sec.n, label: sec.arc.label });
+    if (S.history.length > 400) S.history.splice(0, 100);
+    const info = {
+      chord: S.chord.name,
+      key: noteName(sec, sec.pc) + " " + (sec.modeName === "dorian" ? "dorian" : "minor"),
+      newKey: sec.newKey,
+      section: `${sec.n} · ${sec.arc.label}`,
+      bar: `${bIn + 1} / ${sec.len}`,
+      bpm: Math.round(sec.bpm),
+    };
+    Tone.Draw.schedule(() => {
+      renderInfo(info);
+      drawScore();
+    }, time);
+  }
+
+  function tick16(time) {
+    const step = S.step,
+      s = step % 16,
+      bar = Math.floor(step / 16);
+    if (s === 0) onBar(bar, time);
+    const sec = S.cur,
+      I = S.history.length ? S.history[S.history.length - 1].I : 0;
+    const bIn = bar - sec.start,
+      phraseEnd = bar % 8 === 7;
+    const ch = S.chord;
+
+    // drums
+    if (S.on.kick) {
+      const half = sec.style !== "brejcha" && I < sec.th.kick + 0.08;
+      let hit = half ? s === 0 || s === 8 : s % 4 === 0;
+      if (phraseEnd && s === 12 && sec.skipKick) hit = false;
+      if (hit) {
+        N.kick.triggerAttackRelease(hz(31), "8n", time, s === 0 ? 1 : 0.88);
+        if (sec.style === "brejcha") N.click.triggerAttackRelease("64n", time, 0.8);
+        const depth = sec.style === "brejcha" ? lerp(0.5, 0.75, I) : lerp(0.35, 0.62, I);
+        N.pump.gain.cancelScheduledValues(time);
+        N.pump.gain.setValueAtTime(1 - depth, time);
+        N.pump.gain.linearRampToValueAtTime(1, time + 0.28);
+      }
+      if (phraseEnd && s === 15 && sec.pickup) N.kick.triggerAttackRelease(hz(31), "16n", time, 0.45);
+    }
+    if (s === 0 && bar % 8 === 0) {
+      sec.skipKick = chance(0.3);
+      sec.pickup = chance(0.25);
+      sec.fill = chance(0.4);
+    }
+    if (S.on.hats) {
+      if (s % 4 === 2) N.hatO.triggerAttackRelease("16n", time, 0.6 + rnd() * 0.25);
+      if (phraseEnd && sec.fill && s >= 12) N.hatC.triggerAttackRelease("32n", time, 0.35 + (s - 12) * 0.15);
+    }
+    if (S.on.clap) {
+      if (s === 4 || s === 12) N.clap.triggerAttackRelease("16n", time + 0.004, 0.8);
+      if (s === 15 && chance(0.08)) N.clap.triggerAttackRelease("16n", time, 0.35);
+    }
+    // snare roll that tightens into the drop
+    if (sec.style === "brejcha" && S.step < S.riserUntil) {
+      const p = 1 - (S.riserUntil - S.step) / S.riserLen;
+      const every = p < 0.25 ? 8 : p < 0.5 ? 4 : p < 0.8 ? 2 : 1;
+      if (s % every === 0) N.snare.triggerAttackRelease("32n", time, 0.25 + 0.7 * p);
+    }
+    if (S.on.perc) {
+      const q = sec.perc[s];
+      if (q && chance(0.85)) {
+        N.percPan.pan.setValueAtTime(q.pan, time);
+        N.perc.triggerAttackRelease(hz(q.n), "16n", time, 0.7);
+      }
+    }
+    if (S.on.shaker && chance(0.88))
+      N.shaker.triggerAttackRelease("32n", time, (s % 4 === 2 ? 0.8 : s % 2 ? 0.35 : 0.55) * (0.8 + rnd() * 0.3));
+    if (S.on.glitch && I > 0.1) {
+      const g = sec.glitch[s];
+      if (g && chance(0.72)) {
+        N.gPan.pan.setValueAtTime(g.pan, time);
+        if (g.type === "tick") N.tick.triggerAttackRelease("64n", time, 0.6 + rnd() * 0.4);
+        else N.blip.triggerAttackRelease(hz(fitRange(degMidi(sec, ch.deg + g.deg), 84, 100)), "64n", time, 0.6);
+      }
+    }
+    if (chance(0.04)) N.crackle.triggerAttackRelease("64n", time + rnd() * 0.1, 0.3 + rnd() * 0.7);
+
+    // bass
+    if (S.on.bass) {
+      const b = ch.bass,
+        p = sec.bassPat;
+      if (p === "gallop" && s % 4 !== 0) N.rbass.triggerAttackRelease(hz(b), "32n", time, s % 4 === 2 ? 0.95 : 0.7);
+      if (p === "roll16" && s % 4 >= 2)
+        N.rbass.triggerAttackRelease(hz(s % 4 === 3 && chance(0.5) ? b + 12 : b), "32n", time, s % 4 === 2 ? 1 : 0.65);
+      if (p === "offbeat" && s % 4 === 2) N.bass.triggerAttackRelease(hz(b), "8n", time, 0.9);
+      if (p === "rolling" && (s % 4 === 2 || s % 4 === 3)) N.bass.triggerAttackRelease(hz(b), "16n", time, s % 4 === 2 ? 0.9 : 0.6);
+      if (p === "sustain" && (s === 0 || s === 10)) N.bass.triggerAttackRelease(hz(b), s === 0 ? "2n" : "8n", time, 0.8);
+      if (p === "pulse" && s % 2 === 0) N.bass.triggerAttackRelease(hz(s % 4 === 2 ? b + 12 : b), "16n", time, s % 4 === 2 ? 0.75 : 0.55);
+    }
+
+    // arp
+    if (S.on.arp && sec.arpMask[s]) {
+      const a = ch.arpNotes,
+        n = a.length;
+      let i;
+      if (sec.arpType === "up") i = S.arpI % n;
+      else if (sec.arpType === "updown") {
+        const c = 2 * n - 2;
+        const k = S.arpI % c;
+        i = k < n ? k : c - k;
+      } else i = sec.arpSeq[S.arpI % 8] % n;
+      S.arpI++;
+      N.arp.triggerAttackRelease(hz(a[i]), "32n", time, s % 4 === 0 ? 0.85 : 0.6);
+    }
+
+    // lead riff: follows the key, not the chord; mutates a little every 4 bars
+    if (S.on.lead) {
+      const r = sec.riff[(bIn * 16 + s) % sec.riff.length];
+      if (r) N.lead.triggerAttackRelease(hz(Math.min(91, degMidi(sec, r.d + 14))), "16n", time, r.v);
+      if (s === 0 && bar % 4 === 0 && chance(0.3)) {
+        const i = Math.floor(rnd() * sec.riff.length),
+          x = sec.riff[i];
+        sec.riff[i] = x
+          ? chance(0.3)
+            ? null
+            : { ...x, d: x.d + pick([-2, 2, 5, -5]) }
+          : chance(0.4)
+            ? { d: pick([0, 4, 7]), v: 0.7 }
+            : null;
+      }
+    }
+    // vocal chops
+    if (S.on.voice && sec.style === "brejcha") {
+      const c = sec.chops[s];
+      if (c && chance(0.8)) {
+        N.formants.forEach((f, i) => f.frequency.setValueAtTime(VOWELS[c.v][i], time));
+        N.chop.triggerAttackRelease(hz(fitRange(degMidi(sec, ch.deg + c.d), 62, 76)), "16n", time, 0.8);
+      }
+    }
+
+    // piano motif: 16 eighth notes over 2 bars, follows the chord
+    if (S.on.piano && s % 2 === 0) {
+      if (s === 0 && bIn % 2 === 0 && bIn > 0 && chance(0.18)) sec.motif = mutateMotif(sec.motif, 1);
+      const m = sec.motif[(bIn % 2) * 8 + s / 2];
+      if (m) {
+        const lift = sec.pianoHigh ? 14 : 7;
+        const midi = Math.min(88, degMidi(sec, ch.deg + m.o + lift));
+        const left = ((sec.chordBars - (bIn % sec.chordBars)) * 16 - s) * (barSec() / 16);
+        const swell = 0.85 + 0.15 * Math.sin(((bar % 8) / 8) * Math.PI);
+        const late = s % 4 === 0 ? rnd() * 0.01 : 0.006 + rnd() * 0.018;
+        N.piano.triggerAttackRelease(hz(midi), Math.max(1.2, left), time + late, clamp(m.v * swell * (1 - 0.3 * I) * (0.9 + rnd() * 0.2)));
+      }
+      if (s === 0 && I < 0.35 && bIn % sec.chordBars === 0) {
+        const r = fitRange(degMidi(sec, ch.deg), 43, 54);
+        N.piano.triggerAttackRelease([hz(r), hz(fitRange(degMidi(sec, ch.deg + 4), r + 1, r + 12))], "1m", time + 0.02, 0.32);
+      }
+    }
+
+    // bell: sparse high notes
+    if (S.on.bell && (s === 6 || s === 14) && chance(0.22)) {
+      N.bell.triggerAttackRelease(hz(Math.min(96, degMidi(sec, ch.deg + pick([0, 2, 4, 7]) + 14))), "8n", time, 0.6);
+    }
+
+    if (s % 4 === 0) {
+      const beat = s / 4;
+      Tone.Draw.schedule(() => renderBeat(beat), time);
+    }
+  }
+
+  // ---------- skip ----------
+  function skipSection() {
+    if (!S.cur) return;
+    const bar = Math.floor(S.step / 16) + 1;
+    const sec = S.cur;
+    const target = Math.max(sec.start + 4, Math.ceil(bar / 4) * 4);
+    if (target >= sec.start + sec.len) return;
+    const endBase = sec.arc.f((target - sec.start) / sec.len);
+    sec.len = target - sec.start;
+    const i = S.queue.indexOf(sec);
+    S.queue.length = i + 1;
+    const next = makeSection(sec);
+    next.prevEnd = endBase;
+    S.queue.push(next);
+  }
+
+  // ---------- UI ----------
+  const els = {
+    play: $("#play"),
+    label: $("#playLabel"),
+    icon: $("#playIcon"),
+    skip: $("#skip"),
+    err: $("#err"),
+    chord: $("#chord"),
+    key: $("#key"),
+    section: $("#section"),
+    bar: $("#bar"),
+    bpm: $("#bpm"),
+    elapsed: $("#elapsed"),
+    energy: $("#energy"),
+    energyOut: $("#energyOut"),
+    volume: $("#volume"),
+    volumeOut: $("#volumeOut"),
+    beats: [...document.querySelectorAll(".beat i")],
+    canvas: $("#score"),
+  };
+
+  function renderInfo(i) {
+    els.chord.textContent = i.chord;
+    els.key.textContent = i.key + (i.newKey ? " · new key" : "");
+    els.section.textContent = i.section;
+    els.bar.textContent = i.bar;
+    els.bpm.textContent = i.bpm + " BPM";
+  }
+  function renderBeat(b) {
+    els.beats.forEach((el, k) => el.classList.toggle("on", k === b));
+  }
+  const energyWord = (v) => (v < 0.3 ? "Ambient" : v < 0.72 ? "Steady" : "Driving");
+  function renderControls() {
+    els.energy.value = Math.round(S.energy * 100);
+    els.energyOut.textContent = `${energyWord(S.energy)} · ${Math.round(S.energy * 100)}`;
+    els.volume.value = Math.round(S.volume * 100);
+    els.volumeOut.textContent = String(Math.round(S.volume * 100));
+  }
+  const fmt = (s) => {
+    s = Math.floor(s);
+    const h = Math.floor(s / 3600),
+      m = Math.floor((s % 3600) / 60),
+      x = s % 60;
+    return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0");
+  };
+  setInterval(() => {
+    const live = S.playing ? (performance.now() - S.startedAt) / 1000 : 0;
+    els.elapsed.textContent = fmt(S.playedSec + live);
+  }, 1000);
+
+  function drawScore() {
+    const c = els.canvas,
+      ctx = c.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth,
+      h = c.clientHeight;
+    if (!w || !h) return;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+      c.width = Math.round(w * dpr);
+      c.height = Math.round(h * dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const cs = getComputedStyle(document.documentElement);
+    const col = (n) => cs.getPropertyValue(n).trim();
+    const C = { ink: col("--ink"), muted: col("--muted"), line: col("--line"), accent: col("--accent"), warm: col("--warm") };
+    const labelW = w < 480 ? 54 : 68,
+      padR = 10,
+      laneTop = 26,
+      laneH = 46,
+      rowsTop = laneTop + laneH + 14;
+    const cols = w < 480 ? 48 : 96;
+    const colW = (w - labelW - padR) / cols;
+    const rowH = (h - rowsTop - 10) / LAYERS.length;
+    ctx.font = `11px ${col("--f-mono") || "monospace"}`;
+    ctx.textBaseline = "middle";
+
+    ctx.fillStyle = C.muted;
+    ctx.fillText("Energy", 10, laneTop + laneH / 2);
+    LAYERS.forEach((L, r) => {
+      const y = rowsTop + r * rowH;
+      ctx.fillStyle = C.muted;
+      ctx.fillText(L.name, 10, y + rowH / 2);
+      ctx.fillStyle = C.line;
+      ctx.fillRect(labelW, y + rowH / 2, w - labelW - padR, 1);
+    });
+
+    const hist = S.history.slice(-cols);
+    const off = cols - hist.length;
+    if (!hist.length) {
+      ctx.fillStyle = C.muted;
+      ctx.textAlign = "center";
+      ctx.fillText("Press Play. Each bar draws here as it plays.", labelW + (w - labelW) / 2, laneTop + laneH / 2);
+      ctx.textAlign = "start";
+      return;
+    }
+    // energy curve
+    ctx.beginPath();
+    hist.forEach((rec, i) => {
+      const x = labelW + (off + i + 0.5) * colW,
+        y = laneTop + laneH * (1 - rec.I);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.strokeStyle = C.muted;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.lineTo(labelW + (off + hist.length - 0.5) * colW, laneTop + laneH);
+    ctx.lineTo(labelW + (off + 0.5) * colW, laneTop + laneH);
+    ctx.closePath();
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = C.muted;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    hist.forEach((rec, i) => {
+      const x = labelW + (off + i) * colW;
+      if (rec.secStart) {
+        ctx.fillStyle = C.line;
+        ctx.fillRect(Math.round(x), laneTop - 6, 1, h - laneTop);
+        ctx.fillStyle = C.muted;
+        ctx.fillText(`S${rec.n}`, x + 4, 12);
+      }
+      LAYERS.forEach((L, r) => {
+        if (!rec.on[L.id]) return;
+        const y = rowsTop + r * rowH;
+        ctx.fillStyle = L.kind === "rhy" ? C.warm : C.accent;
+        ctx.globalAlpha = i === hist.length - 1 ? 1 : 0.78;
+        ctx.fillRect(x + 0.5, y + rowH * 0.28, Math.max(1, colW - 1), rowH * 0.44);
+      });
+      ctx.globalAlpha = 1;
+    });
+    const px = labelW + (off + hist.length - 1) * colW;
+    ctx.strokeStyle = C.ink;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px + 0.5, rowsTop - 4, Math.max(2, colW - 1), h - rowsTop - 6);
+  }
+
+  function setVolume(v, ramp = 0.2) {
+    S.volume = clamp(v);
+    if (S.built && S.playing) N.master.gain.rampTo(S.volume * S.volume, ramp);
+  }
+
+  async function togglePlay() {
+    if (typeof Tone === "undefined") {
+      els.err.hidden = false;
+      els.err.textContent = "The audio library did not load. Check your connection and reload the page.";
+      return;
+    }
+    if (!S.playing) {
+      els.play.disabled = true;
+      try {
+        await Tone.start();
+        if (!S.built) {
+          els.label.textContent = "Loading…";
+          await build();
+        }
+        N.hiss.start();
+        N.riser.start();
+        N.breath.start();
+        S.retrigger = true;
+        Tone.Transport.start("+0.05");
+        S.playing = true;
+        S.startedAt = performance.now();
+        N.master.gain.cancelScheduledValues(Tone.now());
+        N.master.gain.rampTo(S.volume * S.volume, 2.5);
+      } catch (e) {
+        console.error(e);
+        els.err.hidden = false;
+        els.err.textContent = "Audio could not start: " + e.message;
+      }
+      els.play.disabled = false;
+    } else {
+      S.playing = false;
+      S.playedSec += (performance.now() - S.startedAt) / 1000;
+      N.master.gain.rampTo(0, 0.5);
+      setTimeout(() => {
+        if (S.playing) return;
+        Tone.Transport.pause();
+        for (const k of ["pad", "strings", "piano", "violin", "cello", "voice"]) if (N[k]) N[k].releaseAll();
+        N.hiss.stop();
+        N.riser.stop();
+        N.breath.stop();
+      }, 600);
+    }
+    els.label.textContent = S.playing ? "Pause" : "Play";
+    els.icon.setAttribute("d", S.playing ? "M5 3h3.5v14H5zM11.5 3H15v14h-3.5z" : "M5 3l12 7-12 7z");
+    els.play.setAttribute("aria-pressed", String(S.playing));
+    els.skip.disabled = !S.playing;
+  }
+
+  els.play.addEventListener("click", togglePlay);
+  els.skip.addEventListener("click", skipSection);
+  const styleBtns = [...document.querySelectorAll(".seg [data-style]")];
+  const renderStyle = () => styleBtns.forEach((b) => b.setAttribute("aria-checked", String(b.dataset.style === S.style)));
+  function setStyle(st) {
+    if (!STYLES[st] || st === S.style) return;
+    S.style = st;
+    save("style", st);
+    renderStyle();
+    const i = S.queue.indexOf(S.cur);
+    if (i >= 0) S.queue.length = i + 1;
+    if (S.playing) skipSection();
+  }
+  styleBtns.forEach((b) => b.addEventListener("click", () => setStyle(b.dataset.style)));
+  els.energy.addEventListener("input", () => {
+    S.energy = els.energy.value / 100;
+    save("energy", S.energy);
+    renderControls();
+  });
+  els.volume.addEventListener("input", () => {
+    setVolume(els.volume.value / 100);
+    save("volume", S.volume);
+    renderControls();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.closest("input, textarea, select") || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.code === "Space" && e.target.tagName !== "BUTTON") {
+      e.preventDefault();
+      togglePlay();
+    } else if (e.key === "n" || e.key === "N") {
+      if (S.playing) skipSection();
+    } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      S.energy = clamp(S.energy + (e.key === "ArrowUp" ? 0.05 : -0.05));
+      save("energy", S.energy);
+      renderControls();
+    }
+  });
+  new ResizeObserver(drawScore).observe(els.canvas);
+  new MutationObserver(drawScore).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawScore);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) drawScore();
+  });
+  if (document.fonts) document.fonts.ready.then(drawScore);
+
+  renderControls();
+  renderStyle();
+  drawScore();
+})();

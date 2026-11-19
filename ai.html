@@ -1,0 +1,105 @@
+<meta charset="utf-8" />
+<meta
+  http-equiv="Content-Security-Policy"
+  content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self'; font-src 'self'; img-src 'self' data:; media-src 'self' data: blob:; connect-src 'self' data: blob: https://generativelanguage.googleapis.com wss://generativelanguage.googleapis.com; object-src 'none'; base-uri 'none'; form-action 'none'"
+/>
+<title>Northlight AI</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="src/fonts.css" />
+<link rel="stylesheet" href="src/ai.css" />
+
+<div class="wrap">
+  <header>
+    <h1>Northlight <span>AI</span></h1>
+    <p class="lede">
+      Endless techno generated live by Google Lyria RealTime. You steer it with a style, an energy level and your own ideas. Each journey
+      grows from a soft intro to a peak, breaks down, drops and fades out. Then it starts over in a new climate and key.
+    </p>
+  </header>
+
+  <section>
+    <h2>Gemini API key</h2>
+    <div class="row">
+      <input id="key" type="password" placeholder="Paste your key. It stays in this browser." autocomplete="off" />
+      <button id="saveKey" type="button">Save key</button>
+      <button id="forgetKey" type="button">Forget key</button>
+    </div>
+    <label class="check"><input id="keySession" type="checkbox" /> Don't save (this tab only)</label>
+    <p class="trust">
+      Your key stays in this browser. This page has no server. It sends your key only to Google, straight from your browser. The code is
+      public: <a href="https://github.com/aviadmizrachi/northlight">read it on GitHub</a>. Use "Forget key" to delete it.
+    </p>
+  </section>
+
+  <section class="row">
+    <button id="play" class="play" type="button">Play</button>
+  </section>
+  <p id="status" class="status">Add your key, then press Play.</p>
+  <p id="health" class="jinfo"></p>
+  <canvas id="scope" aria-hidden="true"></canvas>
+
+  <section>
+    <h2 id="styleLbl">Style</h2>
+    <div class="seg" role="radiogroup" aria-labelledby="styleLbl" id="styles"></div>
+  </section>
+
+  <section>
+    <h2 id="climateLbl">Climate</h2>
+    <div class="seg" role="radiogroup" aria-labelledby="climateLbl" id="climates"></div>
+  </section>
+
+  <section>
+    <h2>Journey</h2>
+    <div id="journey" class="journey" aria-live="polite"></div>
+    <p id="jinfo" class="jinfo"></p>
+    <div class="row gap-top">
+      <button id="nextPhase" type="button">Next phase</button>
+      <button id="startOver" type="button">Start over</button>
+    </div>
+  </section>
+
+  <section class="ctls">
+    <div class="ctl">
+      <label for="energy">Energy <output id="energyOut"></output></label><input id="energy" type="range" min="0" max="100" value="60" />
+    </div>
+    <div class="ctl">
+      <label for="variety">Variety <output id="varietyOut"></output></label><input id="variety" type="range" min="0" max="100" value="45" />
+    </div>
+    <div class="ctl">
+      <label for="melody">Melody <output id="melodyOut"></output></label><input id="melody" type="range" min="0" max="100" value="70" />
+    </div>
+    <div class="ctl">
+      <label for="bpm">Tempo <output id="bpmOut"></output></label><input id="bpm" type="range" min="100" max="140" value="124" />
+    </div>
+    <div class="ctl">
+      <label for="volume">Volume <output id="volumeOut"></output></label><input id="volume" type="range" min="0" max="100" value="75" />
+    </div>
+    <label class="check"><input id="evolve" type="checkbox" checked /> Evolve by itself</label>
+    <label class="check"><input id="journeyOn" type="checkbox" checked /> Journey</label>
+  </section>
+
+  <section>
+    <h2>Steering mix</h2>
+    <ul id="mix" class="mix"></ul>
+    <div class="row gap-top">
+      <input id="idea" type="text" placeholder="Add an idea, for example: acid 303 line, rainy night" />
+      <button id="addIdea" type="button">Add</button>
+    </div>
+  </section>
+
+  <footer>
+    <span
+      >Journey: intro → build → peak → breakdown → rise → drop → outro. Then it starts over with a new key and, on Shuffle, a new
+      climate.</span
+    >
+    <span>Tempo changes restart the groove: the model needs a hard reset to change tempo.</span>
+    <span
+      >Each journey picks one instrument or sample per role: drums, bass, keys, lead, featured instrument and texture. Each phase decides
+      which of them play. Every 16 bars (about 30 s), Evolve changes one instrument or hands one part over to another. The breakdown moves
+      the track to a new key. Orange rows are coming in or going out.</span
+    >
+    <span>Lyria RealTime is an experimental Google model. Use is billed to your Gemini API key. Output is watermarked by Google.</span>
+  </footer>
+</div>
+
+<script type="module" src="src/ai.js"></script>
