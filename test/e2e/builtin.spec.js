@@ -1,5 +1,5 @@
 /* global Tone */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures.js";
 import { collectErrors } from "./errors.js";
 
 test("plays", async ({ page }) => {
